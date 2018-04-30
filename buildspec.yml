@@ -1,0 +1,13 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - npm install -g serverless
+  pre_build:
+    commands:
+      - echo Installing source NPM dependencies...
+      - npm install
+  post_build:
+    commands:
+      - serverless deploy --region us-east-1 --verbose
