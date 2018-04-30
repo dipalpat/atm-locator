@@ -1,0 +1,166 @@
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-step-functions
+
+service: atm-finder
+custom:
+  settings:
+    STREAM_LOCATION_TOPIC: sns-location-list-stream-topic
+    LOCATION_LIST_DYNAMODB_TABLE: location-list
+    ALGOLIA_APP_ID: ${ssm:location-list-algolia-app-id}
+    ALGOLIA_ADMIN_API_KEY: ${ssm:location-list-algolia-admin-api-key}
+    ALGOLIA_INDEX_NAME: locations
+    GOOGLE_GEOCODE_API_KEY: ${ssm:google-geocode-api-key}
+    SLACK_WEBHOOK_ID: ${ssm:slack-webhook-id-testchannel}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: lambda_user
+  environment: ${self:custom.settings}
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:ListStreams"
+        - "dynamodb:Scan"        
+      Resource: 
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.LOCATION_LIST_DYNAMODB_TABLE}
+    - Effect: "Allow"
+      Action:
+        - "sns:Publish"
+        - "sns:Subsribe"
+        - "states:StartExecution"        
+      Resource: 
+        - arn:aws:sns:${self:provider.region}:*:${self:custom.settings.STREAM_LOCATION_TOPIC}
+        - arn:aws:lambda:${self:provider.region}:*:function:atm-finder-dev-*
+        - arn:aws:states:${self:provider.region}:*:stateMachine:atm-finder-dev-v1
+
+functions:
+  firstRun:
+    handler: handler.firstRun
+  findGeoCode:
+    handler: handler.findGeoCode
+  pushToAlgolia:
+    handler: handler.pushToAlgolia
+  locationFailed:
+    handler: handler.locationFailed
+  processUpdates:
+    handler: handler.processUpdates
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startPosition: LATEST
+          enabled: true
+          arn:
+            Fn::GetAtt:
+              - LocationListTable
+              - StreamArn
+    environment:
+      topicARN:
+        Ref: SNSTopicSnslocationliststreamtopic              
+  findLocations:
+    handler: handler.findLocations
+    events:
+      - http:
+          cors: true
+          path: locations
+          method: get
+          private: false
+  dbUpdateConsumer:
+    handler: handler.dbUpdateConsumer
+    events:
+      - sns: ${self:custom.settings.STREAM_LOCATION_TOPIC}
+    environment:
+      statemachine_arn: ${self:resources.Outputs.AtmDashfinderDashdevDashv1.Value}
+ 
+  saveLocation:
+    handler: handler.saveLocation
+    events:
+      - http:
+          path: location
+          method: post
+          cors: true
+          private: false
+  updateLocation:
+    handler: handler.updateLocation
+    events:
+      - http:
+          path: location/{locationId}
+          method: put
+          cors: true
+          private: false          
+  getLocation:
+    handler: handler.getLocation
+    events:
+      - http:
+          path: location/{locationId}
+          method: get
+          cors: true
+          private: false          
+  deleteLocation:
+    handler: handler.deleteLocation
+    events:
+      - http:
+          path: location/{locationId}
+          method: delete
+          cors: true
+          private: false
+
+stepFunctions:
+  stateMachines:
+    atmFinderStateMachine:
+      name: ${self:service}-${opt:stage}-v1
+      definition:
+        Comment: "Step Machine to orchestrate atm finder flow"
+        StartAt: FindGeoCode
+        States:
+          FindGeoCode:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-findGeoCode
+            Next: ChoiceState
+          ChoiceState:
+            Type: Choice
+            Choices:
+            - Variable: "$.searchable"
+              BooleanEquals: true
+              Next: PushToAlgolia
+            - Variable: "$.searchable"
+              BooleanEquals: false
+              Next: LocationFailed
+          PushToAlgolia:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-pushToAlgolia
+            End: true
+          LocationFailed:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-locationFailed
+            End: true            
+resources:
+  Outputs:
+    AtmDashfinderDashdevDashv1:
+      Description: The ARN of the example state machine
+      Value:
+        Ref: AtmDashfinderDashdevDashv1
+  Resources:
+    LocationListTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: "locationId"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "locationId"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.settings.LOCATION_LIST_DYNAMODB_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES

@@ -1,0 +1,22 @@
+{
+  "name": "atm-finder",
+  "version": "1.0.0",
+  "description": "find location of atm",
+  "main": "handler.js",
+  "dependencies": {
+    "algoliasearch": "^3.26.0",
+    "aws-sdk": "^2.215.1",
+    "axios": "^0.18.0",
+    "lodash": "^4.17.5",
+    "slack-webhook": "^1.0.0"
+  },
+  "devDependencies": {
+    "serverless-pseudo-parameters": "^1.4.2",
+    "serverless-step-functions": "^1.3.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
