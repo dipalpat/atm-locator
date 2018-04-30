@@ -16,7 +16,6 @@ custom:
 provider:
   name: aws
   runtime: nodejs8.10
-  profile: lambda_user
   environment: ${self:custom.settings}
   stage: dev
   region: us-east-1
